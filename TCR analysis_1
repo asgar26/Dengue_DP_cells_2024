@@ -1,0 +1,60 @@
+
+#load the libraries
+library(Seurat)
+library(scRepertoire)
+library(ggplot2)
+library(UpSetR)
+library(scales)
+library(circlize)
+
+DP.contig <- read.csv(file = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/Combined_filtered_contig_annotations.csv")
+DP.integrated <- readRDS(file = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/outputs/Robjects/DP.integrated.rds")
+combineTCR_DP <- combineTCR(df = DP.contig, samples = "DP", ID = NULL)
+combineTCR_DP <- stripBarcode(combineTCR_DP$DP, column = "barcode", connector = "_", num_connects = 2)
+remove(DP.contig)
+# can filter out the TCR NA barcodes
+DP.integrated <- combineExpression(combineTCR_DP, DP.integrated, 
+                            cloneCall="strict", 
+                            proportion = FALSE, filterNA = TRUE, 
+                            cloneTypes=c(Single=1, Small=5, Medium=20, Large=100, Hyperexpanded=1000))
+# or can keep the TCR NA barcodes
+DP.integrated <- combineExpression(combineTCR_DP, DP.integrated, 
+                                   cloneCall="strict", 
+                                   proportion = FALSE, filterNA = FALSE, 
+                                   cloneTypes=c(Single=1, Small=5, Medium=20, Large=100, Hyperexpanded=1000))
+
+tcr_meta.data <- DP.integrated@meta.data
+tcr_meta.data_expand <- tcr_meta.data[tcr_meta.data$cloneType != "Single (0 < X <= 1)",]
+clusters <- c(9,8,5,6,3,1,4,0,2,7)
+df_new <- data.frame(matrix(nrow = 0,ncol = 3))
+colnames(df_new) <- c("chr","start","end")
+for (i in clusters){
+  tot <- length(table(tcr_meta.data_expand[tcr_meta.data_expand$seurat_clusters==i,]$CTstrict))
+  print(tot)
+  df_new[nrow(df_new)+1,] <- c(i, '0', tot)
+}
+df_new$start <- as.numeric(df_new$start)
+df_new$end <- as.numeric(df_new$end)
+cell_color <- hue_pal()(10)
+df_new$col <- cell_color
+View(df_new)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
