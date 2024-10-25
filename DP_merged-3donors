@@ -5,8 +5,7 @@ library(Seurat)
 library(ggplot2)
 library(tidyverse)
 
-
-#load eature bc matrices are per sample out files from cellranger multi run
+#load feature bc matrices are per sample out files from cellranger multi run
 P022.1 <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO2_filtered_feature_bc_matrix/matrix.mtx.gz",
                 features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO2_filtered_feature_bc_matrix/features.tsv.gz",
                 cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO2_filtered_feature_bc_matrix/barcodes.tsv.gz")
@@ -19,8 +18,8 @@ P032.1 <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP c
                 features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO4_filtered_feature_bc_matrix/features.tsv.gz",
                 cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO4_filtered_feature_bc_matrix/barcodes.tsv.gz")
 
-#these feature bc matrices contained the counts of HTO/hashtag reads as the last four rows,  
-#therefore we selected only RNA expression reads in the analysis
+#since these feature bc matrices also contained the counts of HTO/hashtag reads as the last four rows,  
+#therefore we pulled out only RNA expression read counts for the downstream analyses
 P022.1 <- P022.1[1:36601,]
 P042.1 <- P042.1[1:36601,]
 P032.1 <- P032.1[1:36601,]
@@ -87,11 +86,11 @@ DP.filtered <- RunUMAP(DP.filtered, reduction = "pca", dims = 1:30)
 DP.filtered <- FindNeighbors(DP.filtered, dims = 1:30)
 DP.filtered <- FindClusters(DP.filtered)
 view(DP.filtered@meta.data)
-p1 <- DimPlot(DP.filtered, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters")
-p2 <- DimPlot(DP.filtered, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters", split.by = "sample_id")
+p1 <- DimPlot(DP.filtered, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters")
+p2 <- DimPlot(DP.filtered, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters", split.by = "sample_id")
 p1 | p2
 
-# integration
+# CCA-based sample integration to minimize donor-based bias in clustering
 object.list <- SplitObject(DP.filtered, split.by = 'sample_id')
 for (i in 1:length(object.list)) {
   object.list[[i]] <- NormalizeData(object =  object.list[[i]], normalization.method = "LogNormalize", scale.factor = 10000)
@@ -103,37 +102,43 @@ remove(i, object.list, integr.features)
 DP.integrated <- IntegrateData(anchorset = integr.anchors)
 remove(integr.anchors, DP.filtered)
 
-#Seurat standard workflow
-DefaultAssay(DP.integrated) <- "integrated"
+#post-integration standard workflow
 DP.integrated <- ScaleData(DP.integrated, vars.to.regress = c("nCount_RNA", "nFeature_RNA", "CC.Difference", "Mito_percent", "dissociation_1", "hypoxia_1"))
 DP.integrated <- RunPCA(DP.integrated)
 ElbowPlot(DP.integrated, ndims = 50)
-DP.integrated <- JackStraw(DP.integrated, num.replicate = 100)
-DP.integrated <- ScoreJackStraw(DP.integrated, dims = 1:20)
-JackStrawPlot(DP.integrated, dims = 1:20)
 DP.integrated <- RunUMAP(DP.integrated, reduction = "pca", dims = 1:30)
 DP.integrated <- FindNeighbors(DP.integrated, dims = 1:30)
 DP.integrated <- FindClusters(DP.integrated)
-DP.integrated <- FindClusters(DP.integrated, resolution = 0.8)
-DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE)
-DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters")
+DP.integrated <- FindClusters(DP.integrated, resolution = seq(0.2,2,0.2))
+DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters")
 DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "integrated_snn_res.0.8")
-DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "sample_id")
-DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "Phase")
+DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "sample_id")
+DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "Phase")
 view(DP.integrated@meta.data)
-clustree(DP.integrated@meta.data, prefix = "integrated_snn_res.")
-DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE)
 
-#csp_assay
-DP_raw <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Raw data/DP/Combined Analysis/raw_feature_bc_matrix/matrix.mtx.gz",
-                  features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Raw data/DP/Combined Analysis/raw_feature_bc_matrix/features.tsv.gz",
-                  cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Raw data/DP/Combined Analysis/raw_feature_bc_matrix/barcodes.tsv.gz")
-DP_ADT <- DP_raw[36602:36613, colnames(DP.integrated)]
-CSP <- CreateAssayObject(counts = DP_ADT)
-remove(DP_raw, DP_ADT)
+library(clustree)
+clustree(DP.integrated@meta.data, prefix = "integrated_snn_res.")
+
+# add csp_assay to the seurat object
+Combined <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/Combined_filtered_feature_bc_matrix/matrix.mtx.gz",
+                features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/Combined_filtered_feature_bc_matrix/features.tsv.gz",
+                cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/Combined_filtered_feature_bc_matrix/barcodes.tsv.gz")
+
+#cell surface protein (csp+hto) expression read counts were present together with gene expression read counts,
+#last twelve rows corresponds to CD45RA, CD197, CD185, CD279, CD183, CD196, CD194, CD27.1, HTO1, HTO2, HTO3, HTO4
+Combined_ADT <- Combined[36602:36613, colnames(DP.integrated)]
+CSP <- CreateAssayObject(counts = Combined_ADT)
 DP.integrated[["CSP"]] <- CSP
-remove(CSP)
+remove(Combined, Combined_ADT, CSP)
+
+#normalize, scale the CSP data
 DefaultAssay(DP.integrated) <- "CSP"
 DP.integrated <- NormalizeData(DP.integrated, normalization.method = "CLR", margin = 2, assay = "CSP")
 DP.integrated <- ScaleData(DP.integrated, assay = "CSP")
+
+
+
+
+
+
 
