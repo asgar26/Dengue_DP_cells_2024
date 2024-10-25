@@ -110,6 +110,8 @@ DP.integrated <- RunUMAP(DP.integrated, reduction = "pca", dims = 1:30)
 DP.integrated <- FindNeighbors(DP.integrated, dims = 1:30)
 DP.integrated <- FindClusters(DP.integrated)
 DP.integrated <- FindClusters(DP.integrated, resolution = seq(0.2,2,0.2))
+
+#dimension reduction plots
 DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters")
 DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "integrated_snn_res.0.8")
 DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "sample_id")
@@ -135,6 +137,89 @@ remove(Combined, Combined_ADT, CSP)
 DefaultAssay(DP.integrated) <- "CSP"
 DP.integrated <- NormalizeData(DP.integrated, normalization.method = "CLR", margin = 2, assay = "CSP")
 DP.integrated <- ScaleData(DP.integrated, assay = "CSP")
+
+#Significant DEGs enriched in each of clusters
+DP.integrated <- ScaleData(DP.integrated, features = rownames(DP.integrated))
+all.markers_DP <- FindAllMarkers(DP.integrated, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+all.markers_DP <- all.markers_DP[all.markers_DP$p_val_adj < 0.05,]
+HIST_genes <- str_subset(str_to_upper(all.markers_DP$gene), "^HIST")
+var_genes <- all.markers_DP[! all.markers_DP$gene %in% HIST_genes,]
+
+#hierarchical dendogram based on significantly enriched DEGs
+library(dendextend)
+avg.exp.RNA <- AverageExpression(DP.integrated, assays = "RNA", features = unique(all.markers_DP$gene),
+                                 return.seurat = FALSE, group.by = "ident", slot = "data")
+avg.exp.RNA <- as.data.frame(avg.exp.RNA$RNA)
+avg.exp.RNA <- as.data.frame(t(avg.exp.RNA))
+avg.exp.RNA %>% select(colnames(avg.exp.RNA)) %>% dist() %>% hclust() %>% as.dendrogram() -> dend
+par(mar=c(7,5,7,5))  # Increase bottom margin to have the complete label
+plot(dend)
+
+#based on hierarchical dendogram results, set the order of clusters
+DP.integrated <- RenameIdents(DP.integrated, `7` = "7")
+DP.integrated <- RenameIdents(DP.integrated, `2` = "2")
+DP.integrated <- RenameIdents(DP.integrated, `0` = "0")
+DP.integrated <- RenameIdents(DP.integrated, `4` = "4")
+DP.integrated <- RenameIdents(DP.integrated, `1` = "1")
+DP.integrated <- RenameIdents(DP.integrated, `3` = "3")
+DP.integrated <- RenameIdents(DP.integrated, `6` = "6")
+DP.integrated <- RenameIdents(DP.integrated, `5` = "5")
+DP.integrated <- RenameIdents(DP.integrated, `8` = "8")
+DP.integrated <- RenameIdents(DP.integrated, `9` = "9")
+DP.integrated@meta.data$seurat_clusters <- Idents(DP.integrated)
+
+#plot heatmap (bulk) for top 200 enriched genes per cluster
+cluster.avg <- AverageExpression(DP.integrated, assays = "RNA", features = rownames(DP.integrated),
+                                 return.seurat = TRUE, group.by = "ident", slot = "data")
+top200_DP <- all.markers_DP %>% group_by(cluster) %>% top_n(n=200, wt = avg_log2FC)
+DoHeatmap(cluster.avg, features = unique(top200_DP$gene), assay = "RNA", draw.lines = FALSE, label = TRUE, angle = 0, size = 4) + 
+scale_fill_gradientn(colors = c("grey", "black", "yellow"))
+
+#dotplot of top 10 enriched genes per cluster
+top10_DP <- var_genes %>% group_by(cluster) %>% top_n(n=10, wt = avg_log2FC)
+DotPlot(DP.integrated, features = unique(top10_DP$gene), assay = "RNA", cols = c("gold", "red")) + RotatedAxis()
+DotPlot(DP.integrated, features = unique(top10_DP$gene), assay = "RNA", cols = c("gold", "red"))$data
+
+#feature plots, and violin plots
+DefaultAssay(DP.integrated) <- "RNA"
+FeaturePlot(DP.integrated, features = c("MKI67", "PDCD1", "CXCR5", "CXCR3", "CCR6", "CCR4"), pt.size = 1, cols = c("gold", "red"), order = TRUE, ncol = 3)
+FeaturePlot(DP.integrated, features = c("CD27.1", "CD279", "CD185", "CD183", "CD196", "CD194"), pt.size = 1, cols = c("gold", "red"), order = TRUE, ncol = 3)
+VlnPlot(DP.integrated, features =  c("CXCR3", "PDCD1", "CXCR5"), pt.size = 0.1, add.noise = FALSE, adjust = 1)
+FeaturePlot(DP.integrated, features = c("CXCR5", "PDCD1"), pt.size = 1, blend = TRUE, cols = c("grey80", "green", "red"), 
+            max.cutoff = 1, blend.threshold = 0.5, order = TRUE)
+
+
+#calculate the percentage of the cytokines IL21, CD40LG, IL10, IFNG, GZMB, GNLY in a given cluster, numbered as 5,6,3,1,4,0,2
+length(WhichCells(DP.integrated, idents = 5, expression = IL21 > 0))/length(WhichCells(DP.integrated, idents = 5))*100
+IL21.per <- c(12.7, 6.05, 22.4, 17.5, 11.4, 0.21, 5.6)
+CD40LG.per <- c(17.22, 17.19, 33.88, 27.5, 22.5, 0.64, 20.74)
+IL10.per <- c(28.77, 7.75, 15.66, 13.4, 10.3, 0.53, 0.17)
+IFNg.per <- c(55.66, 43.83, 75.4, 61.0, 48.5, 1.82, 14.84)
+GZMB.per <- c(46.7, 20.34, 33.88, 29.1, 23.8, 0.21, 1.35)
+GNLY.per <- c(21.46, 4.12, 11.29, 9.4, 8.7, 2.67, 1.18)
+vln.col <- c("#A3A500", "#39B600", "#00BF7D", "#00BFC4", "#00B0F6", "#9590FF", "#E76BF3")
+barplot(IL21.per, horiz = FALSE, col = vln.col, space = 0 , xlab = "Percent", ylab = "Cluster", border = FALSE, ylim = c(0,25))
+barplot(CD40LG.per, horiz = FALSE, col = vln.col, space = 0 , xlab = "Percent", ylab = "Cluster", border = FALSE, ylim = c(0,35))
+barplot(IL10.per, horiz = FALSE, col = vln.col, space = 0 , xlab = "Percent", ylab = "Cluster", border = FALSE, ylim = c(0,30))
+barplot(IFNg.per, horiz = FALSE, col = vln.col, space = 0 , xlab = "Percent", ylab = "Cluster", border = FALSE, ylim = c(0,80))
+barplot(GZMB.per, horiz = FALSE, col = vln.col, space = 0 , xlab = "Percent", ylab = "Cluster", border = FALSE, ylim = c(0,50))
+barplot(GNLY.per, horiz = FALSE, col = vln.col, space = 0 , xlab = "Percent", ylab = "Cluster", border = FALSE, ylim = c(0,25))
+
+#to create FeatureScatter plot for a given cluster, cells were subset for that cluster
+sub.clust <- subset(DP.integrated, subset = IFNG > 0, idents = 5)
+FeatureScatter(sub.clust, "GZMB", "IL21", pt.size = 3, cols = "#A3A500")
+length(WhichCells(sub.clust, expression = IL21 > 0 & GZMB == 0))/nrow(sub.clust@meta.data))*100
+length(WhichCells(sub.clust, expression = IL21 == 0 & GZMB > 0))/nrow(sub.clust@meta.data))*100
+length(WhichCells(sub.clust, expression = IL21 > 0 & GZMB > 0))/nrow(sub.clust@meta.data))*100
+
+IFNG_GZMB <- WhichCells(DP.integrated, expression = IFNG > 0 & IL21 == 0 & GZMB > 0)
+IFNG_IL21 <- WhichCells(DP.integrated, expression = IFNG > 0 & IL21 > 0 & GZMB == 0)
+IFNG_DP <- WhichCells(DP.integrated, expression = IFNG > 0 & IL21 > 0 & GZMB > 0)
+DP.integrated$cytokine <- "negative"
+for (i in IFNG_GZMB){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_GZMB"}
+for (i in IFNG_IL21){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_IL21"}
+for (i in IFNG_DP){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_DP"}
+
 
 
 
