@@ -220,6 +220,42 @@ for (i in IFNG_GZMB){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IF
 for (i in IFNG_IL21){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_IL21"}
 for (i in IFNG_DP){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_DP"}
 
+#Monocle3: trajectory $ pseudotype analysis
+library(SeuratWrappers)
+library(monocle3)
+
+#cell dataset
+cell.data.set <- as.cell_data_set(DP.integrated)
+
+#cell metadata
+colData(cell.data.set)
+view(cell.data.set@colData)
+
+#gene metadata
+fData(cell.data.set)
+rownames(fData(cell.data.set))
+fData(cell.data.set)$gene_name <- rownames(fData(cell.data.set))
+
+#counts
+counts(cell.data.set)
+cell.data.set <- cluster_cells(cell.data.set, reduction_method = "UMAP")
+plot_cells(cell.data.set, color_cells_by = "partition")
+
+#assign clusters and UMAP
+cell.data.set@clusters$UMAP$clusters <- DP.integrated@active.ident
+cell.data.set@int_colData$reducedDims$UMAP <- DP.integrated@reductions$umap@cell.embeddings
+cell.data.set <- learn_graph(cell.data.set, use_partition = TRUE)
+cell.data.set <- order_cells(cell.data.set)
+
+library(scales)
+cell_color <- hue_pal()(10)
+plot_cells(cell.data.set, color_cells_by = "cluster", label_branch_points = FALSE, label_leaves = FALSE, label_roots = FALSE, cell_stroke = 1/10,
+           cell_size = 1, label_cell_groups = FALSE, label_groups_by_cluster = FALSE, trajectory_graph_segment_size = 1, 
+           trajectory_graph_color = "black") + scale_color_manual(values = cell_color)
+plot_cells(cell.data.set, color_cells_by = "pseudotime", label_branch_points = FALSE, label_leaves = FALSE, label_roots = FALSE, cell_stroke = 1/10,
+           cell_size = 1, label_cell_groups = FALSE, label_groups_by_cluster = FALSE, 
+           trajectory_graph_segment_size = 1, trajectory_graph_color = "black")
+
 
 
 
