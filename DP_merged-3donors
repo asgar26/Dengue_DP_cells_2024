@@ -1,0 +1,139 @@
+
+
+#load libraries
+library(Seurat)
+library(ggplot2)
+library(tidyverse)
+
+
+#load eature bc matrices are per sample out files from cellranger multi run
+P022.1 <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO2_filtered_feature_bc_matrix/matrix.mtx.gz",
+                features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO2_filtered_feature_bc_matrix/features.tsv.gz",
+                cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO2_filtered_feature_bc_matrix/barcodes.tsv.gz")
+
+P042.1 <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO3_filtered_feature_bc_matrix/matrix.mtx.gz",
+                features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO3_filtered_feature_bc_matrix/features.tsv.gz",
+                cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO3_filtered_feature_bc_matrix/barcodes.tsv.gz")
+
+P032.1 <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO4_filtered_feature_bc_matrix/matrix.mtx.gz",
+                features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO4_filtered_feature_bc_matrix/features.tsv.gz",
+                cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/DemuxHTO4_filtered_feature_bc_matrix/barcodes.tsv.gz")
+
+#these feature bc matrices contained the counts of HTO/hashtag reads as the last four rows,  
+#therefore we selected only RNA expression reads in the analysis
+P022.1 <- P022.1[1:36601,]
+P042.1 <- P042.1[1:36601,]
+P032.1 <- P032.1[1:36601,]
+
+#create Seurat objects
+P022.1 <- CreateSeuratObject(counts = P022.1, project = "DP_cells", min.cells = 3, min.features = 200)
+P042.1 <- CreateSeuratObject(counts = P042.1, project = "DP_cells", min.cells = 3, min.features = 200)
+P032.1 <- CreateSeuratObject(counts = P032.1, project = "DP_cells", min.cells = 3, min.features = 200)
+
+#add info to metadata
+# sample_id
+P022.1$sample_id <- "P022.1"
+P042.1$sample_id <- "P042.1"
+P032.1$sample_id <- "P032.1"
+
+# merge/remove Seurat objects
+DP <- merge(P022.1, y = c(P042.1, P032.1))
+
+# quality control
+DP <- PercentageFeatureSet(DP, pattern = "^MT-", col.name = "Mito_percent")
+DP <- PercentageFeatureSet(DP, pattern = "^RP[SL]", col.name = "Ribo_percent")
+
+# QC plots
+VlnPlot(DP, features = c("nCount_RNA", "nFeature_RNA", "Mito_percent", "Ribo_percent"), group.by = "sample_id", pt.size = 0, ncol = 4)
+FeatureScatter(DP, feature1 = "nCount_RNA", feature2 = "Ribo_percent", group.by = "sample_id")
+FeatureScatter(DP, feature1 = "nFeature_RNA", feature2 = "Ribo_percent", group.by = "sample_id")
+FeatureScatter(DP, feature1 = "Mito_percent", feature2 = "Ribo_percent", group.by = "sample_id")
+
+# filtering
+DP.filtered <- subset(DP, subset = nCount_RNA > 1000 & nCount_RNA < 50000 & nFeature_RNA > 500 & nFeature_RNA < 7500 & Mito_percent < 7 & Ribo_percent > 7)
+
+#post-filter QC plots
+VlnPlot(DP.filtered, features = c("nCount_RNA", "nFeature_RNA", "Mito_percent", "Ribo_percent"), group.by = "sample_id", pt.size = 0, ncol = 4)
+
+#Normalization, Scaling, FindVariables
+DP.filtered <- NormalizeData(object =  DP.filtered, normalization.method = "LogNormalize", scale.factor = 10000)
+DP.filtered <- FindVariableFeatures(object =  DP.filtered, selection.method = "vst", nfeatures = 3000)
+
+#cell cycle annotation
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+DP.filtered <- CellCycleScoring(DP.filtered, s.features = s.genes, g2m.features = g2m.genes, set.ident = FALSE)
+DP.filtered$CC.Difference <- DP.filtered$S.Score - DP.filtered$G2M.Score
+
+#dissociation associated genes
+genes.dissoc <- c("ATF3", "BTG2", "CEBPB", "CEBPD", "CXCL3", "CXCL2", "CXCL1", "DNAJA1", "DNAJB1", "DUSP1", 
+                  "EGR1", "FOS", "FOSB", "HSP90AA1", "HSP90AB1", "HSPA1A", "HSPA1B", "HSPA1A", "HSPA1B", 
+                  "HSPA8", "HSPB1", "HSPE1", "HSPH1", "ID3", "IER2", "JUN", "JUNB", "JUND", "MT1X", "NFKBIA", 
+                  "NR4A1", "PPP1R15A", "SOCS3", "ZFP36")
+genes.hypoxia <- c("LRRC42", "YKT6", "SLC25A32", "MCTS1", "MRPL13", "PSMA7", "SLC16A1", "CORO1C", "KIF4A", "CTSL2", 
+                   "ANLN", "SHCBP1", "PSRC1", "CHCHD2", "TUBA1C", "TUBA1B", "MAD2L2", "ACOT7", "MRPS17", "MAP7D1", 
+                   "MRPL15", "NP", "UTP11L", "C20orf20", "CDKN3", "ANKRD37", "BNIP3", "PGK1", "VEGFA", "KIF20A", "HIG2", 
+                   "PGAM1", "ADM", "HK2", "SLC2A1", "CA9", "PFKP", "ENO1", "AK3L1", "P4HA1", "SEC61G", "LDHA", "NDRG1", 
+                   "TUBB6", "GPI", "ALDOA", "DDITA", "TPI1", "GAPDH", "MIF", "RBM35A")
+DP.filtered <- AddModuleScore(DP.filtered, features = list(genes.dissoc), ctrl = 100, name = 'dissociation_')
+DP.filtered <- AddModuleScore(DP.filtered, features = list(genes.hypoxia), ctrl = 100, name = 'hypoxia_')
+VlnPlot(DP.filtered, features = c("S.Score", "G2M.Score", "dissociation_1", "hypoxia_1"), group.by = "sample_id", pt.size = 0, ncol = 4)
+
+#Seurat standard workflow
+DP.filtered <- ScaleData(DP.filtered, vars.to.regress = c("nCount_RNA", "nFeature_RNA", "CC.Difference", "Mito_percent", "dissociation_1", "hypoxia_1"))
+DP.filtered <- RunPCA(DP.filtered)
+ElbowPlot(DP.filtered, ndims = 50)
+DP.filtered <- RunUMAP(DP.filtered, reduction = "pca", dims = 1:30)
+DP.filtered <- FindNeighbors(DP.filtered, dims = 1:30)
+DP.filtered <- FindClusters(DP.filtered)
+view(DP.filtered@meta.data)
+p1 <- DimPlot(DP.filtered, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters")
+p2 <- DimPlot(DP.filtered, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters", split.by = "sample_id")
+p1 | p2
+
+# integration
+object.list <- SplitObject(DP.filtered, split.by = 'sample_id')
+for (i in 1:length(object.list)) {
+  object.list[[i]] <- NormalizeData(object =  object.list[[i]], normalization.method = "LogNormalize", scale.factor = 10000)
+  object.list[[i]] <- FindVariableFeatures(object =  object.list[[i]], selection.method = "vst", nfeatures = 3000)
+}
+integr.features <- SelectIntegrationFeatures(object.list = object.list, nfeatures = 3000, fvf.nfeatures = 3000)
+integr.anchors <- FindIntegrationAnchors(object.list = object.list, anchor.features = integr.features)
+remove(i, object.list, integr.features)
+DP.integrated <- IntegrateData(anchorset = integr.anchors)
+remove(integr.anchors, DP.filtered)
+
+#Seurat standard workflow
+DefaultAssay(DP.integrated) <- "integrated"
+DP.integrated <- ScaleData(DP.integrated, vars.to.regress = c("nCount_RNA", "nFeature_RNA", "CC.Difference", "Mito_percent", "dissociation_1", "hypoxia_1"))
+DP.integrated <- RunPCA(DP.integrated)
+ElbowPlot(DP.integrated, ndims = 50)
+DP.integrated <- JackStraw(DP.integrated, num.replicate = 100)
+DP.integrated <- ScoreJackStraw(DP.integrated, dims = 1:20)
+JackStrawPlot(DP.integrated, dims = 1:20)
+DP.integrated <- RunUMAP(DP.integrated, reduction = "pca", dims = 1:30)
+DP.integrated <- FindNeighbors(DP.integrated, dims = 1:30)
+DP.integrated <- FindClusters(DP.integrated)
+DP.integrated <- FindClusters(DP.integrated, resolution = 0.8)
+DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE)
+DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "seurat_clusters")
+DimPlot(DP.integrated, reduction = "umap", label = TRUE, pt.size = 1, repel = TRUE, group.by = "integrated_snn_res.0.8")
+DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "sample_id")
+DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "Phase")
+view(DP.integrated@meta.data)
+clustree(DP.integrated@meta.data, prefix = "integrated_snn_res.")
+DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE)
+
+#csp_assay
+DP_raw <- ReadMtx(mtx =  "C:/Users/VIL/Desktop/Asgar/10x single cell/Raw data/DP/Combined Analysis/raw_feature_bc_matrix/matrix.mtx.gz",
+                  features = "C:/Users/VIL/Desktop/Asgar/10x single cell/Raw data/DP/Combined Analysis/raw_feature_bc_matrix/features.tsv.gz",
+                  cells = "C:/Users/VIL/Desktop/Asgar/10x single cell/Raw data/DP/Combined Analysis/raw_feature_bc_matrix/barcodes.tsv.gz")
+DP_ADT <- DP_raw[36602:36613, colnames(DP.integrated)]
+CSP <- CreateAssayObject(counts = DP_ADT)
+remove(DP_raw, DP_ADT)
+DP.integrated[["CSP"]] <- CSP
+remove(CSP)
+DefaultAssay(DP.integrated) <- "CSP"
+DP.integrated <- NormalizeData(DP.integrated, normalization.method = "CLR", margin = 2, assay = "CSP")
+DP.integrated <- ScaleData(DP.integrated, assay = "CSP")
+
