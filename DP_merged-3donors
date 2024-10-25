@@ -180,6 +180,18 @@ top10_DP <- var_genes %>% group_by(cluster) %>% top_n(n=10, wt = avg_log2FC)
 DotPlot(DP.integrated, features = unique(top10_DP$gene), assay = "RNA", cols = c("gold", "red")) + RotatedAxis()
 DotPlot(DP.integrated, features = unique(top10_DP$gene), assay = "RNA", cols = c("gold", "red"))$data
 
+library(scales)
+df <- prop.table(table(DP.integrated@meta.data$seurat_clusters, DP.integrated@meta.data$sample_id), margin = 2)*100
+barplot(df, horiz = TRUE, col = hue_pal()(10), space = 0 , xlab = "Percent", ylab = "Patient id", border = FALSE)
+df1 <- prop.table(table(DP.integrated@meta.data$seurat_clusters))*100
+barplot(df1, horiz = FALSE, col = hue_pal()(10), space = 0 , xlab = "Percent", ylab = "Cluster", border = FALSE)
+
+geneset <- c("ICOS",  "CD69", "CD44", "CD38", "CD70", "HLA-DRA", "HLA-DRB1", "IL2RA", "TNFSF8", "TNFSF9", "PDCD1", "TIGIT",  "ENTPD1", "LAG3", "HAVCR2", "IFNG", "GZMA", "PRF1", "NKG7", "GZMB", 
+            "GNLY", "IL10", "CD40LG", "IL21", "CCL3", "CCL4", "CCL5", "CCR2", "CCR5", "CXCR3", "CXCR5", "CXCR6", "CX3CR1", "ITGB1", "ITGB7", "ITGA4", "ITGAE", "SELPLG", "S1PR1", "S1PR4", "CCR7", 
+            "SELL", "TBX21", "STAT4", "RUNX3", "PRDM1", "IKZF3", "ID2", "SH2D1A", "SLAMF1", "SLAMF6", "CD84", "MAF", "BCL6", "TCF7", "TOX2", "FOXP3", "LEF1", "TOX", "IKZF2", "KLF2", "KLF6")
+DotPlot(DP.integrated, features = geneset, assay = "RNA", idents = c(5,6,3,0,2), cols = c("gold", "red")) + RotatedAxis()
+dotplot.2 <- DotPlot(DP.integrated, features = geneset, assay = "RNA", idents = c(5,6,3,0,2), cols = c("gold", "red"))$data
+
 #feature plots, and violin plots
 DefaultAssay(DP.integrated) <- "RNA"
 FeaturePlot(DP.integrated, features = c("MKI67", "PDCD1", "CXCR5", "CXCR3", "CCR6", "CCR4"), pt.size = 1, cols = c("gold", "red"), order = TRUE, ncol = 3)
@@ -215,10 +227,46 @@ length(WhichCells(sub.clust, expression = IL21 > 0 & GZMB > 0))/nrow(sub.clust@m
 IFNG_GZMB <- WhichCells(DP.integrated, expression = IFNG > 0 & IL21 == 0 & GZMB > 0)
 IFNG_IL21 <- WhichCells(DP.integrated, expression = IFNG > 0 & IL21 > 0 & GZMB == 0)
 IFNG_DP <- WhichCells(DP.integrated, expression = IFNG > 0 & IL21 > 0 & GZMB > 0)
-DP.integrated$cytokine <- "negative"
+DP.integrated$cytokine <- "Negative"
 for (i in IFNG_GZMB){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_GZMB"}
 for (i in IFNG_IL21){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_IL21"}
 for (i in IFNG_DP){DP.integrated$cytokine[colnames(DP.integrated) == i] <- "IFNG_DP"}
+view(DP.integrated@meta.data)
+
+DP.integrated@meta.data$cytokine <- factor(DP.integrated@meta.data$cytokine, levels = c("Negative", "IFNG_GZMB", "IFNG_IL21", "IFNG_DP"))
+DimPlot(DP.integrated, reduction = "umap", label = FALSE, pt.size = 1, repel = TRUE, group.by = "cytokine", cols = c("grey", "blue", "red", "gold"), order = TRUE) + NoLegend()
+VlnPlot(DP.integrated, features =  c("PDCD1", "MKI67", "CCR2", "CCR5"), pt.size = 0.1, add.noise = FALSE, adjust = 1, idents = c("IFNG_IL21", "IFNG_GZMB"), cols = c("#00B0F6", "#E76BF3"), ncol = 2)
+
+#volcano and heatmap plot for IL21 vs GZMB
+library(ggrepel)
+library(ggplot2)
+library(MAST)
+
+Idents(DP.integrated) <- DP.integrated$cytokine
+genes2 <- FindMarkers(DP.integrated, ident.1 = IFNG_IL21, ident.2 = IFNG_GZMB, only.pos = FALSE, min.pct = 0.1, logfc.threshold = 0, test.use = "MAST")
+genes2 <- genes2 %>% arrange(desc(avg_log2FC))
+genes2$gene <- rownames(genes2)
+df.1 <- genes2
+df.1$diffexpressed <- "NO"
+df.1$diffexpressed[df.1$avg_log2FC > 0.25 & df.1$p_val_adj < 0.05] <- "UP"
+df.1$diffexpressed[df.1$avg_log2FC < -0.25 & df.1$p_val_adj < 0.05] <- "DOWN"
+mycolors <- c("blue", "red", "grey")
+names(mycolors) <- c("DOWN", "UP", "NO")
+df.1$delabel <- NA
+df.1$delabel[df.1$diffexpressed != "NO"] <- df.1$gene[df.1$diffexpressed != "NO"]
+
+ggplot(data=df.1, aes(x=avg_log2FC, y=-log10(p_val_adj), col=diffexpressed, label=delabel)) + 
+  geom_point() + theme_minimal() + geom_text_repel() +
+  geom_vline(xintercept=c(-0.25, 0, 0.25), col= c("grey80", "black", "grey80")) +
+  geom_hline(yintercept=-log10(0.05), col="grey80") +
+  scale_color_manual(values=mycolors) + xlim(-3.5, 1) + ylim(0, 35) + NoLegend() +
+  theme(panel.background = element_blank(), panel.grid = element_blank(), axis.line = element_line(), axis.ticks = element_line())
+
+cytokine.avg <- AverageExpression(DP.integrated, assays = "RNA", features = rownames(DP.integrated),
+                                 return.seurat = TRUE, group.by = "ident", slot = "data")
+top_deg <- c(df.1$delabel[df.1$diffexpressed =="UP"], df.1$delabel[df.1$diffexpressed =="DOWN"])
+DoHeatmap(cytokine.avg, features = unique(top_deg), assay = "RNA", draw.lines = FALSE, label = TRUE, angle = 0, size = 4) + scale_fill_gradientn(colors = c("grey", "black", "yellow"))
+
 
 #Monocle3: trajectory $ pseudotype analysis
 library(SeuratWrappers)
@@ -257,9 +305,66 @@ plot_cells(cell.data.set, color_cells_by = "pseudotime", label_branch_points = F
            trajectory_graph_segment_size = 1, trajectory_graph_color = "black")
 
 
+#volcano plots for cluster TH1(5) vs TCM(2)
+genes.5v2 <- FindMarkers(DP.integrated, ident.1 = 5, ident.2 = 2, only.pos = FALSE, min.pct = 0.1, logfc.threshold = 0, test.use = "MAST")
+genes.5v2$gene <- rownames(genes.5v2)
+df.1 <- genes.5v2
+df.1$diffexpressed <- "NO"
+df.1$diffexpressed[df.1$avg_log2FC > 0.25 & df.1$p_val_adj < 0.05] <- "UP"
+df.1$diffexpressed[df.1$avg_log2FC < -0.25 & df.1$p_val_adj < 0.05] <- "DOWN"
+mycolors <- c("blue", "red", "grey")
+names(mycolors) <- c("DOWN", "UP", "NO")
+df.1$delabel <- NA
+df.1$delabel[df.1$diffexpressed != "NO"] <- df.1$gene[df.1$diffexpressed != "NO"]
+
+ggplot(data=df.1, aes(x=avg_log2FC, y=-log10(p_val_adj), col=diffexpressed, label=delabel)) + 
+  geom_point() + theme_minimal() + geom_text_repel() +
+  geom_vline(xintercept=c(-0.25, 0, 0.25), col= c("grey80", "black", "grey80")) +
+  geom_hline(yintercept=-log10(0.05), col="grey80") +
+  scale_color_manual(values=mycolors) + xlim(-2.5, 4) + ylim(0, 210) + NoLegend() +
+  theme(panel.background = element_blank(), panel.grid = element_blank(), axis.line = element_line(), axis.ticks = element_line())
+
+#Gene Set Enrichment Analysis
+library(readxl)
+library(fgsea)
+library(ggplot2)
+library(MAST)
+
+#conv_genes are listed in supplementary table S5D
+conv_genes <- read_xlsx(path = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/Tables/conv_genes.xlsx", col_names = TRUE)
+conventional_geneList <- list(CTL = as.character(na.omit(conv_genes$cytotoxicity)), 
+                              IFN_response = as.character(na.omit(conv_genes$Interferon)))
+pathways <- conventional_geneList
+
+genes <- FindAllMarkers(DP.integrated, only.pos = FALSE, min.pct = 0.1, logfc.threshold = 0, test.use = "MAST")
+genes <- genes[genes$p_val_adj < 0.05,]
+
+#To calculate enrichment scores for a given cluster, say cluster 5
+genes1 <- genes[genes$cluster==5,]
+genes1 <- genes1 %>% arrange(desc(avg_log2FC))
+geneList <- genes1$avg_log2FC
+names(geneList) <- genes1$gene
+fgsea <- fgsea(pathways = pathways, stats = geneList, eps = 0.0, minSize = 3, maxSize = 500)
+plotEnrichment(conventional_geneList[["IFN_response"]], geneList) + ggtitle("IFN_response")
+fgsea2 <- data.frame(matrix(nrow = 2,ncol = 8))
+fgsea2[,1] <- names(conventional_geneList)
+# use alphabets to denote the cluster order, e.g., 5,6,3,1,4,0,2
+colnames(fgsea2) <- c("pathway", "a","b","c","d","e","f","g")
+for(i in fgsea2$pathway){
+fgsea2$a[ fgsea2$pathway==i ] <- fgsea$NES[ fgsea$pathway==i ]
+}
+
+#when you are complete running NES calculation for all clusters one-by-one, plot the tile for NES for all clusters
+fgsea2$pathway <- factor(fgsea2$pathway, levels = fgsea2$pathway)
+tile <- fgsea2 %>% pivot_longer(cols = c("a","b","c","d","e","f","g"), 
+                                      names_to = "cluster", values_to = "NES")
+ggplot(tile, aes(x=pathway, y=cluster, fill=NES)) + geom_tile() + #coord_fixed() +
+  scale_fill_gradient2(low = "navyblue", high = "red")
 
 
-
-
-
+# saveRDS
+saveRDS(DP, file = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/outputs/Robjects/DP.rds")
+saveRDS(DP.filtered, file = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/outputs/Robjects/DP.filtered.rds")
+saveRDS(DP.integrated, file = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/outputs/Robjects/DP.integrated.rds")
+saveRDS(cell.data.set, file = "C:/Users/VIL/Desktop/Asgar/10x single cell/Dengue DP cells/outputs/Robjects/cell.data.set.rds")
 
