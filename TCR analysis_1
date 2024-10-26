@@ -23,6 +23,18 @@ DP.integrated <- combineExpression(combineTCR_DP, DP.integrated,
                                    proportion = FALSE, filterNA = FALSE, 
                                    cloneTypes=c(Single=1, Small=5, Medium=20, Large=100, Hyperexpanded=1000))
 
+#plot UMAP showing the expansion and frequency
+slot(DP.integrated, "meta.data")$cloneType <- factor(slot(DP.integrated, "meta.data")$cloneType, 
+                                              levels = c("Single (0 < X <= 1)", 
+                                                         "Small (1 < X <= 5)", 
+                                                         "Medium (5 < X <= 20)", 
+                                                         "Large (20 < X <= 100)",
+                                                         "Hyperexpanded (100 < X <= 1000)"))
+
+DimPlot(DP.integrated, group.by = "cloneType", pt.size = 1, cols = c("gold", "red", "red2", "red3", "red4")) + NoLegend()
+df <- table(DP.integrated@meta.data$cloneType, DP.integrated@meta.data$seurat_clusters)
+barplot(df, horiz = FALSE, col = c("gold", "red", "red2", "red3", "red4"), space = 0 , xlab = "Clusters", ylab = "Number of clones", border = FALSE, legend.text = FALSE)
+
 tcr_meta.data <- DP.integrated@meta.data
 tcr_meta.data_expand <- tcr_meta.data[tcr_meta.data$cloneType != "Single (0 < X <= 1)",]
 clusters <- c(9,8,5,6,3,1,4,0,2,7)
@@ -143,11 +155,62 @@ circos.genomicTrackPlotRegion(df_new, ylim = c(0, 2), bg.border = NA, track.heig
                               })
 circos.genomicLink(df1_link, df2_link, col = link.col)
 
+#generate clone.info table showing all details of clonotypes and overlap among clusters
+clonotype.table <- as.data.frame.array(table(tcr_data_filter$seurat_clusters, tcr_data_filter$CTstrict))
+clonotype.table <- as.data.frame(t(clonotype.table))
+clonotype.table$clone_size <- rowSums(clonotype.table)
+clone.info <- data.frame(matrix(nrow = nrow(clonotype.table), ncol = 4))
+colnames(clone.info) <- c("clone_id", "CTgene", "CTaa", "CTnt")
+clone.info$clone_id <- paste("clonotype", rownames(clone.info), sep = " ")
+rownames(clone.info) <- rownames(clonotype.table)
+for(i in rownames(clone.info)){
+  clone.info[rownames(clone.info)==i,]$CTgene <- unique(tcr_meta.data_expand[tcr_meta.data_expand$CTstrict==i,]$CTgene)
+  clone.info[rownames(clone.info)==i,]$CTaa <- unique(tcr_meta.data_expand[tcr_meta.data_expand$CTstrict==i,]$CTaa)
+  clone.info[rownames(clone.info)==i,]$CTnt <- unique(tcr_meta.data_expand[tcr_meta.data_expand$CTstrict==i,]$CTnt)
+}
+clone.info <- separate(clone.info, col = 'CTgene', into = c('TCRA_gene', 'TCRB_gene'), sep = '_')
+clone.info <- separate(clone.info, col = 'CTaa', into = c('TCRA_aa', 'TCRB_aa'), sep = '_')
+clone.info <- separate(clone.info, col = 'CTnt', into = c('TCRA_nt', 'TCRB_nt'), sep = '_')
+clone.info <- cbind(clone.info, clonotype.table)
+clone.info$prop.clone_size <- clone.info$clone_size / sum(clone.info$clone_size)
+clone.info$cloneType <- NA
+for(i in rownames(clone.info)){
+clone.info[rownames(clone.info)==i,]$cloneType <- as.character(unique(tcr_meta.data_expand[tcr_meta.data_expand$CTstrict==i,]$cloneType))
+}
+#plot top20 ranked clonotypes
+top20_clonotypes <- clone.info %>% top_n(n=20, wt = clone_size) %>% arrange(desc(clone_size))
+par(mar=c(8, 4, 4, 2) + 0.1)
+barplot(top20_clonotypes$clone_size[1:20], beside = TRUE, col = "gold", border = "red",  ylim = c(0, 1200), ylab = "Number of clones", 
+        names.arg = top20_clonotypes$clone_id[1:20], las = 2)
 
+#UpSetR plot to plot combinatorial overlap among clusters
+clone.overlap <- clone.info[,c("clone_id", clusters)]
+clone.overlap[,2:11] <- ifelse(clone.overlap[,2:11] !=0, yes = 1, no =0)
+upset(clone.overlap, sets = colnames(clone.overlap[2:11]), mb.ratio = c(0.55, 0.45), order.by = c("freq", "degree"), show.numbers = "no", keep.order = TRUE,
+      main.bar.color = "royalblue3", sets.bar.color = "red3", matrix.color = "royalblue2", nintersects = NA, query.legend="top")
 
+#to generate the tile plot for the overlap clonotypes among clusters
+overlap <- data.frame(matrix(ncol = 0, nrow = 10))
+for (i in 2:11) {
+  overlapcount <- clone.overlap
+  overlapcount <- overlapcount[overlapcount[,i]==1,]
+  overlap[ncol(overlap)+1] <- as.data.frame(colSums(overlapcount[2:11]))
+}
+colnames(overlap) <- colnames(clone.overlap[2:11])
+rownames(overlap) <- colnames(clone.overlap[2:11])
 
-
-
-
-
+#we included only selected clusters, one can calculate percentage with respect to total expanded clonotypes, e.g., 231
+overlap2 <- round((overlap[,c(3,4,5,8,9)]/231)*100, 1)
+overlap2 <- as.data.frame(t(overlap2))
+#or, other way is to calculate ovelap percentage with respect to total expanded clonotypes per cluster
+overlap2 <- overlap[,c(3,4,5,8,9)]
+for (i in 1:ncol(overlap2)){overlap2[,i] <- round((overlap2[,i]/max(overlap2[,i]))*100, 1)}
+overlap2 <- as.data.frame(t(overlap2))
+#use alphabets to keep the order of clusters
+colnames(overlap2) <- letters[1:ncol(overlap2)]
+overlap2 <- rownames_to_column(overlap2, "cluster")
+overlap2$cluster <- factor(overlap2$cluster, levels = overlap2$cluster)
+overlap2 <- overlap2 %>% pivot_longer(cols = colnames(overlap2)[2:ncol(overlap2)], names_to = "to", values_to = "percent")
+ggplot(overlap2, aes(x=cluster, y=to, fill=percent)) + geom_tile() +
+  scale_fill_gradient2(low = "white", high = "red")
 
