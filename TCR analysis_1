@@ -75,7 +75,6 @@ View(df_new)
 tcr_data_filter <- tcr_meta.data_expand[,c("seurat_clusters","CTgene", "CTaa", "CTnt", "CTstrict")]
 tcr_data_filter <- na.omit(tcr_data_filter)
 tcr_data_filter_1 <- data.frame(matrix(nrow = 0,ncol = 3))
-colnames(tcr_data_filter_1) <- c("clone_id", "clone_id_size","cluster")
 for(i in clusters){
   filtered_data = tcr_data_filter[tcr_data_filter$seurat_clusters==i,]
   print(i)
@@ -85,6 +84,7 @@ for(i in clusters){
   tcr_data_filter_1 <- rbind(tcr_data_filter_1,data)
 }
 tcr_data_filter_1 <- distinct(tcr_data_filter_1)
+colnames(tcr_data_filter_1) <- c("clone_id", "clone_id_size","cluster")
 tcr_data_filter_1 <- tcr_data_filter_1 %>% group_by(cluster) %>% arrange(desc(clone_id_size), .by_group = TRUE)
 
 df_bed <- data.frame(matrix(nrow = 0,ncol = 5))
@@ -213,4 +213,104 @@ overlap2$cluster <- factor(overlap2$cluster, levels = overlap2$cluster)
 overlap2 <- overlap2 %>% pivot_longer(cols = colnames(overlap2)[2:ncol(overlap2)], names_to = "to", values_to = "percent")
 ggplot(overlap2, aes(x=cluster, y=to, fill=percent)) + geom_tile() +
   scale_fill_gradient2(low = "white", high = "red")
+
+#for GZMB vs IL21 clonal overlap analysis
+tcr_cytokine <- tcr_meta.data[c(IFNG_IL21, IFNG_GZMB),]
+clusters <- c("IFNG_IL21", "IFNG_GZMB")
+df_new <- data.frame(matrix(nrow = 0,ncol = 3))
+colnames(df_new) <- c("chr","start","end")
+for (i in clusters){
+  tot <- length(table(tcr_cytokine[tcr_cytokine$cytokine==i,]$CTstrict))
+  print(tot)
+  df_new[nrow(df_new)+1,] <- c(i, '0', tot)
+}
+df_new$start <- as.numeric(df_new$start)
+df_new$end <- as.numeric(df_new$end)
+cell_color <- c("#E76BF3", "#00B0F6")
+df_new$col <- cell_color
+View(df_new)
+tcr_data_filter <- tcr_cytokine[,c("cytokine","CTgene", "CTaa", "CTnt", "CTstrict")]
+tcr_data_filter <- na.omit(tcr_data_filter)
+tcr_data_filter_1 <- data.frame(matrix(nrow = 0,ncol = 3))
+for(i in clusters){
+  filtered_data = tcr_data_filter[tcr_data_filter$cytokine==i,]
+  print(i)
+  data = as.data.frame(table(filtered_data$CTstrict))
+  data$seurat_clusters <- i
+  #print(data)
+  tcr_data_filter_1 <- rbind(tcr_data_filter_1,data)
+}
+tcr_data_filter_1 <- distinct(tcr_data_filter_1)
+colnames(tcr_data_filter_1) <- c("clone_id", "clone_id_size","cluster")
+tcr_data_filter_1 <- tcr_data_filter_1 %>% group_by(cluster) %>% arrange(desc(clone_id_size), .by_group = TRUE)
+
+df_bed <- data.frame(matrix(nrow = 0,ncol = 5))
+colnames(df_bed) <- c("cluster","start","end","value","clone_id")
+tcr_data_density <- tcr_data_filter_1
+for(i in unique(tcr_data_density$cluster)){
+  filtered_data = tcr_data_density[tcr_data_density$cluster==i,]
+  for(i in 1:nrow(filtered_data)){
+    clus = filtered_data[[i,3]]
+    start_val = i
+    end_val = i
+    dens = filtered_data[[i,2]]
+    id = as.character(filtered_data[[i,1]])
+    df_bed[nrow(df_bed)+1,] <- c(clus,start_val,end_val,dens,id)
+  }
+}
+df_bed$start <- as.numeric(df_bed$start)
+df_bed$end <- as.numeric(df_bed$end)
+df_bed$value <- as.numeric(df_bed$value)
+df_bed$value <- log10(df_bed$value)
+track.col <- as.data.frame(cell_color, row.names = as.character(clusters))
+track.col <- rownames_to_column(track.col, var = "cluster")
+for(i in unique(df_bed$cluster)){
+  df_bed$col[df_bed$cluster==i] <- track.col$cell_color[track.col$cluster==i]
+}
+
+df_link <- df_bed
+df_link <- df_link[,c("cluster","start","clone_id")]
+View(df_link)
+
+df_link_frame <- data.frame(matrix(nrow = 0, ncol = 4))
+colnames(df_link_frame) <- c("cluster1","loc1","cluster2","loc2")
+f_cluster = "IFNG_IL21"
+link.col <- track.col$cell_color[track.col$cluster==f_cluster]
+l_f_cluster <- df_link[df_link$cluster == f_cluster,]
+l_o_cluster <- df_link[df_link$cluster != f_cluster,]
+for(i in 1:nrow(l_f_cluster)){
+  match_clone_id1 <- l_f_cluster[[i,3]]
+  cluster1 <- l_f_cluster[[i,1]]
+  loc_1 <- l_f_cluster[[i,2]]
+  for(j in 1:nrow(l_o_cluster)){
+    match_clone_id2 <- l_o_cluster[[j,3]]
+    if (match_clone_id1 == match_clone_id2){
+      cluster2 <- l_o_cluster[[j,1]]
+      loc_2 <- l_o_cluster[[j,2]]
+      df_link_frame[nrow(df_link_frame)+1,] <- c(cluster1,loc_1,cluster2,loc_2)
+    }
+  }
+}
+df1_link <- df_link_frame[,c("cluster1","loc1")]
+df1_link$loc1 <- as.numeric(df1_link$loc1)
+df2_link <- df_link_frame[,c("cluster2","loc2")]
+df2_link$loc2 <- as.numeric(df2_link$loc2)
+
+track.height = 0.1
+par(mar = c(0, 0, 0, 0))
+circos.genomicInitialize(df_new, plotType = "labels")
+circos.genomicTrack(df_bed, numeric.column = 4, bg.border = NA,
+                    panel.fun = function(region, value, ...){
+                    circos.genomicLines(region, value, type = "h", col = value$col)
+                    })
+circos.genomicTrackPlotRegion(df_new, ylim = c(0, 2), bg.border = NA, track.height = track.height,
+                              cell.padding = c(0, 0, 0, 0),
+                              panel.fun = function(region, value, ...){
+                              circos.genomicRect(region, value, ybottom = 0, ytop = 1, col = value$col, border = NA, ...)
+                              xlim = get.cell.meta.data("xlim")
+                              circos.rect(xlim[1], 0, xlim[2], 1, border = NA)
+                              })
+circos.genomicLink(df1_link, df2_link, col = link.col)
+
+
 
